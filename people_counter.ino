@@ -70,6 +70,9 @@ String getHex(byte convertByte){
   return String(hex[(convertByte >>4) & 0x0F]) + String(hex[convertByte & 0x0F]);
 }
 
+// Mode (0 == undetermined, 1 == config, 2 == run).
+int mode = 0;
+
 void connect_to_wifi() {
   // Check WiFi firmware.
   String fv = WiFi.firmwareVersion();
@@ -192,8 +195,31 @@ void setup() {
   
   // initialize digital pin LED_BUILTIN as an output.
   pinMode(LED_BUILTIN, OUTPUT);
-  
-  connect_to_wifi();
+
+
+  // Check initial distance.
+  getTFminiData(&SensorOne, &TFminiOne);
+  getTFminiData(&SensorTwo, &TFminiTwo);
+  delay(4000);
+  while (TFminiOne.receiveComplete != true) {
+    getTFminiData(&SensorOne, &TFminiOne);
+  }
+  while (TFminiTwo.receiveComplete != true) {
+    getTFminiData(&SensorTwo, &TFminiTwo);
+  }
+
+  if (TFminiOne.distance < 10 && TFminiTwo.distance < 10) {
+    if (Serial) {
+      Serial.println("Starting in config mode.");
+    }
+    mode = 1;
+  } else {
+    if (Serial) {
+      Serial.println("Starting in run mode.");
+    }
+    mode = 2;
+    connect_to_wifi();
+  }
 }
 
 void updateSensorState(TFmini* sensor, TFmini* otherSensor) {
@@ -222,61 +248,67 @@ int detectedEntry = 0;
 
 void loop() {
 
-  static unsigned long lastDetectionTimestamp = 0;
-
-  static unsigned long lastTime = millis();
-  static unsigned int count = 0;
-  static unsigned int frequency = 0;
-
-  TFminiOne.detectedLeave = false;
-  TFminiTwo.detectedLeave = false;
+  if (mode == 2) {
+    // Run mode.
+    static unsigned long lastDetectionTimestamp = 0;
   
-  getTFminiData(&SensorOne, &TFminiOne);
-  getTFminiData(&SensorTwo, &TFminiTwo);
+    static unsigned long lastTime = millis();
+    static unsigned int count = 0;
+    static unsigned int frequency = 0;
   
-  if(TFminiOne.receiveComplete == true && TFminiTwo.receiveComplete == true) {
-    ++count;
-
-    if(millis() - lastTime > 999) {
-      lastTime = millis();
-      frequency = count;
-      count = 0;
-    }
-
-    // Set initial resting distance.
-    if (TFminiOne.restingDistance == 0) {
-      TFminiOne.restingDistance = TFminiOne.distance;
-    }
-    if (TFminiTwo.restingDistance == 0) {
-      TFminiTwo.restingDistance = TFminiTwo.distance;
-    }
-  
-    updateSensorState(&TFminiOne, &TFminiTwo);
-    updateSensorState(&TFminiTwo, &TFminiOne);
-
-    //Serial.println(lastDetectionTimestamp);
-
-    bool lastDetectionOldEnough = millis() > (lastDetectionTimestamp + 1000);
-  
-    if (TFminiOne.detectedLeave && lastDetectionOldEnough) {
-      lastDetectionTimestamp = millis();
-      if (Serial) {
-        Serial.println("In");
-      }
-      counter.increase();
-      counter_send();
-    } else if (TFminiTwo.detectedLeave && lastDetectionOldEnough) {
-      lastDetectionTimestamp = millis();
-      if (Serial) {
-        Serial.println("Out");
-      }
-      counter.decrease();
-      counter_send();
-    }
+    TFminiOne.detectedLeave = false;
+    TFminiTwo.detectedLeave = false;
     
-    TFminiOne.receiveComplete = false;
-    TFminiTwo.receiveComplete = false;
+    getTFminiData(&SensorOne, &TFminiOne);
+    getTFminiData(&SensorTwo, &TFminiTwo);
+    
+    if(TFminiOne.receiveComplete == true && TFminiTwo.receiveComplete == true) {
+      ++count;
+  
+      if(millis() - lastTime > 999) {
+        lastTime = millis();
+        frequency = count;
+        count = 0;
+      }
+  
+      // Set initial resting distance.
+      if (TFminiOne.restingDistance == 0) {
+        TFminiOne.restingDistance = TFminiOne.distance;
+      }
+      if (TFminiTwo.restingDistance == 0) {
+        TFminiTwo.restingDistance = TFminiTwo.distance;
+      }
+    
+      updateSensorState(&TFminiOne, &TFminiTwo);
+      updateSensorState(&TFminiTwo, &TFminiOne);
+  
+      //Serial.println(lastDetectionTimestamp);
+  
+      bool lastDetectionOldEnough = millis() > (lastDetectionTimestamp + 1000);
+    
+      if (TFminiOne.detectedLeave && lastDetectionOldEnough) {
+        lastDetectionTimestamp = millis();
+        if (Serial) {
+          Serial.println("In");
+        }
+        counter.increase();
+        counter_send();
+      } else if (TFminiTwo.detectedLeave && lastDetectionOldEnough) {
+        lastDetectionTimestamp = millis();
+        if (Serial) {
+          Serial.println("Out");
+        }
+        counter.decrease();
+        counter_send();
+      }
+      
+      TFminiOne.receiveComplete = false;
+      TFminiTwo.receiveComplete = false;
+    }
+  } else if (mode == 1) {
+    // Config mode.
   }
+  
 
 }
 
