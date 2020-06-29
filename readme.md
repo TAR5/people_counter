@@ -23,7 +23,7 @@ Connect the red wire of each sensor to 5v and the black wire of each sensor to G
 You can find the required libraries in the Arduino library manager.
 
 - wiring_private.h (for giving the pins the required functionality, already included by default)
-- ArduinoHttpClient.h (libary to make HTTP requests, already included by default)
+- ArduinoHttpClient.h (library to make HTTP requests, already included by default)
 - WiFiNINA.h (WiFi library for the MKR WiFi 1010 board)
 
 ### Secrets
@@ -37,5 +37,16 @@ You can find the required libraries in the Arduino library manager.
 #define SECRET_AP_SSID "peopleCounter"
 ```
 
+The WiFi SSID and password is changeable via the config interface (see "Configuration").
+
 Use the `WiFiSSLClient` instead of the `WiFiClient` if your API endpoint is HTTPS only.
+
+
+### Configuration
+
+To configure the counter start the device with obscured sensors. The counter will enter into config mode and open a WiFi access point called "peopleCounter".
+
+Connect to the access point and open `http://192.168.4.1` in your browser.
+
+Set your WiFi SSID and password for the run mode.
 
