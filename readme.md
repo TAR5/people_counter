@@ -34,6 +34,7 @@ You can find the required libraries in the Arduino library manager.
 #define SECRET_ENDPOINT "/api/v1/your-api-endpoint"
 #define SECRET_HOST "your-api-host.com"
 #define SECRET_PORT 80 // Your API port, use 80 for HTTP and 443 for HTTPS
+#define SECRET_AP_SSID "peopleCounter"
 ```
 
 Use the `WiFiSSLClient` instead of the `WiFiClient` if your API endpoint is HTTPS only.

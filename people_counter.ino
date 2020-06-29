@@ -1,4 +1,6 @@
 #include "wiring_private.h"
+#include <WString.h>
+#include <SPI.h>
 #include <WiFiNINA.h>
 #include <ArduinoHttpClient.h>
 #include "arduino_secrets.h"
@@ -9,6 +11,7 @@ const char pass[] = SECRET_PW;
 const char counterUrl[] = SECRET_ENDPOINT;
 const char host[] = SECRET_HOST;
 const int port = SECRET_PORT;
+const char APssid[] = SECRET_AP_SSID;
 
 // Pin 0 als TX verwenden (Weißes Kabel hier rein).
 // Pin 1 als RX verwenden (Grünes Kabel hier rein).
@@ -64,6 +67,9 @@ byte mac[6];
 int status = WL_IDLE_STATUS;
 String macAddress = "unknown";
 
+// Create server.
+WiFiServer server(80);
+
 // Convert bytes to hex.
 const char hex[17]="0123456789ABCDEF";
 String getHex(byte convertByte){
@@ -73,7 +79,7 @@ String getHex(byte convertByte){
 // Mode (0 == undetermined, 1 == config, 2 == run).
 int mode = 0;
 
-void connect_to_wifi() {
+void connectToWifi() {
   // Check WiFi firmware.
   String fv = WiFi.firmwareVersion();
   if (fv < "1.0.0") {
@@ -112,6 +118,75 @@ void connect_to_wifi() {
   errorBlinking();
 }
 
+void openServer() {
+  if (Serial) {
+    Serial.println("[WiFi] Access Point Web Server");
+  }
+
+  // check for the WiFi module:
+  if (WiFi.status() == WL_NO_MODULE) {
+    if (Serial) {
+      Serial.println("[WiFi] Communication with WiFi module failed!");
+    }
+    // don't continue
+    while (true);
+  }
+
+  // Check WiFi firmware.
+  String fv = WiFi.firmwareVersion();
+  if (fv < "1.0.0") {
+    if (Serial) {
+      Serial.println("[WiFi] Please upgrade the firmware");
+    }
+  }
+
+  // by default the local IP address of will be 192.168.4.1
+  // you can override it with the following:
+  // WiFi.config(IPAddress(10, 0, 0, 1));
+
+  // print the network name (SSID);
+  if (Serial) {
+    Serial.print("[WiFi] Creating access point named: ");
+    Serial.println(APssid);
+  }
+  
+  // Create open network. Change this line if you want to create an WEP network:
+  status = WiFi.beginAP(APssid);
+  if (status != WL_AP_LISTENING) {
+    if (Serial) {
+      Serial.println("[WiFi] Creating access point failed");
+    }
+    // don't continue
+    while (true);
+  }
+
+  // wait 10 seconds for connection:
+  delay(10000);
+
+  // start the web server on port 80
+  server.begin();
+
+  // you're connected now, so print out the status
+  printWiFiStatus();
+}
+
+void printWiFiStatus() {
+  if (Serial) {
+    // print the SSID of the network you're attached to:
+    Serial.print("[WiFi] SSID: ");
+    Serial.println(WiFi.SSID());
+  
+    // print your WiFi shield's IP address:
+    IPAddress ip = WiFi.localIP();
+    Serial.print("[WiFi] IP Address: ");
+    Serial.println(ip);
+  
+    // print where to go in a browser:
+    Serial.print("[WiFi] Configure the counter by opening a browser to http://");
+    Serial.println(ip);
+  }
+}
+
 void errorBlinking() {
   int i = 0;
   while (i < 10) {
@@ -122,7 +197,7 @@ void errorBlinking() {
   }
 }
 
-void counter_send() {
+void counterSend() {
   // turn the LED on (HIGH is the voltage level)
   digitalWrite(LED_BUILTIN, HIGH);
 
@@ -213,12 +288,13 @@ void setup() {
       Serial.println("Starting in config mode.");
     }
     mode = 1;
+    openServer();
   } else {
     if (Serial) {
       Serial.println("Starting in run mode.");
     }
     mode = 2;
-    connect_to_wifi();
+    connectToWifi();
   }
 }
 
@@ -246,7 +322,54 @@ void updateSensorState(TFmini* sensor, TFmini* otherSensor) {
 
 int detectedEntry = 0;
 
+unsigned char h2int(char c)
+{
+    if (c >= '0' && c <='9'){
+        return((unsigned char)c - '0');
+    }
+    if (c >= 'a' && c <='f'){
+        return((unsigned char)c - 'a' + 10);
+    }
+    if (c >= 'A' && c <='F'){
+        return((unsigned char)c - 'A' + 10);
+    }
+    return(0);
+}
+
+String urldecode(String str)
+{
+    
+    String encodedString="";
+    char c;
+    char code0;
+    char code1;
+    for (int i =0; i < str.length(); i++){
+        c=str.charAt(i);
+      if (c == '+'){
+        encodedString+=' ';  
+      }else if (c == '%') {
+        i++;
+        code0=str.charAt(i);
+        i++;
+        code1=str.charAt(i);
+        c = (h2int(code0) << 4) | h2int(code1);
+        encodedString+=c;
+      } else{
+        
+        encodedString+=c;  
+      }
+      
+      yield();
+    }
+    
+   return encodedString;
+}
+
 void loop() {
+  boolean serialAvailable = false;
+  if (Serial) {
+    serialAvailable = true;
+  }
 
   if (mode == 2) {
     // Run mode.
@@ -288,18 +411,18 @@ void loop() {
     
       if (TFminiOne.detectedLeave && lastDetectionOldEnough) {
         lastDetectionTimestamp = millis();
-        if (Serial) {
+        if (serialAvailable) {
           Serial.println("In");
         }
         counter.increase();
-        counter_send();
+        counterSend();
       } else if (TFminiTwo.detectedLeave && lastDetectionOldEnough) {
         lastDetectionTimestamp = millis();
-        if (Serial) {
+        if (serialAvailable) {
           Serial.println("Out");
         }
         counter.decrease();
-        counter_send();
+        counterSend();
       }
       
       TFminiOne.receiveComplete = false;
@@ -307,8 +430,100 @@ void loop() {
     }
   } else if (mode == 1) {
     // Config mode.
-  }
+    
+    // Compare the previous status to the current status.
+    if (status != WiFi.status()) {
+      // It has changed, update the variable.
+      status = WiFi.status();
+      if (serialAvailable) {
+        if (status == WL_AP_CONNECTED) {
+          // A device has connected to the AP.
+          Serial.println("[Config] Device connected to AP");
+        } else {
+          // A device has disconnected from the AP, and we are back in listening mode.
+          Serial.println("[Config] Device disconnected from AP");
+        }
+      }
+    }
+    
+    WiFiClient client = server.available();
   
+    if (client) {
+      if (serialAvailable) {
+        Serial.println("[Config] New client");
+      }
+      
+      String currentLine = "";
+      String request = "";
+      String urlPath = "";
+      String inputSSID = "";
+      String inputPW = "";
+      
+      while (client.connected()) {
+        if (client.available()) {
+          char c = client.read();
+
+          // Print the request to the monitor.
+          //if (serialAvailable) {
+          //  Serial.write(c);
+          //}
+
+          request += c;
+          
+          if (c == '\n') {
+            // If the current line is blank, you got two newline characters in a row.
+            // that's the end of the client HTTP request, so send a response:
+            if (currentLine.length() == 0) {
+              // Get the URL from the path and the query paramters.
+              // GET /?ssid=SSID&pw=PW HTTP/1.1
+              if(request.indexOf("ssid=") > 0) {
+                int startOfPath = request.indexOf("GET /?");
+                int endOfPath = request.indexOf(" HTTP");
+                urlPath = request.substring(startOfPath+6, endOfPath);
+                // Get parameters from path.
+                int split = urlPath.indexOf("&");
+                inputSSID = urlPath.substring(5, split);
+                inputPW = urlPath.substring(split+4);
+                // Url decode special chars.
+                inputSSID = urldecode(inputSSID);
+                inputPW = urldecode(inputPW);
+                if (serialAvailable) {
+                  Serial.print("[Config] SSID: ");
+                  Serial.println(inputSSID);
+                  Serial.print("[Config] PW: ");
+                  Serial.println(inputPW);
+                }
+              }
+
+              // Print the HTTP header.
+              client.println("HTTP/1.1 200 OK");
+              client.println("Content-type:text/html");
+              client.println();
+  
+              // Print the HTTP content.
+              client.print("<!doctype html><html><head></head><body><h4>People Counter Configuration</h4><form method='get'><label>SSID:</label> <input name='ssid' type='text' value='"+inputSSID+"'><br><label>Password:</label> <input name='pw' type='text' value='"+inputPW+"'><br><button type='submit'>Save</button></form>");
+  
+              // The HTTP response ends with another blank line.
+              client.println();
+              break;
+            }
+            else {
+              currentLine = "";
+            }
+          }
+          else if (c != '\r') {
+            currentLine += c;
+          }
+        }
+      }
+      
+      // Close the connection:
+      client.stop();
+      if (serialAvailable) {
+        Serial.println("client disconnected");
+      }
+    }
+  }
 
 }
 
