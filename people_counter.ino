@@ -3,11 +3,12 @@
 #include <SPI.h>
 #include <WiFiNINA.h>
 #include <ArduinoHttpClient.h>
+#include <FlashStorage.h>
 #include "arduino_secrets.h"
 
 // Config variables.
-const char ssid[] = SECRET_SSID;
-const char pass[] = SECRET_PW;
+char ssid[255] = SECRET_SSID;
+char pass[255] = SECRET_PW;
 const char counterUrl[] = SECRET_ENDPOINT;
 const char host[] = SECRET_HOST;
 const int port = SECRET_PORT;
@@ -47,6 +48,20 @@ typedef struct {
   }
 } Counter;
 
+// Create a structure that is big enough to contain a name
+// and a surname. The "valid" variable is set to "true" once
+// the structure is filled with actual data for the first time.
+typedef struct {
+  boolean valid;
+  char ssid[255];
+  char pw[255];
+} Config;
+
+// Reserve a portion of flash memory to store a "Config" and call it "configStore".
+FlashStorage(configStore, Config);
+
+Config storedConfig;
+
 // Create counter object.
 Counter counter = {0, 0, 0};
 
@@ -78,19 +93,20 @@ String getHex(byte convertByte){
 
 // Mode (0 == undetermined, 1 == config, 2 == run).
 int mode = 0;
+boolean serialAvailable = false;
 
 void connectToWifi() {
   // Check WiFi firmware.
   String fv = WiFi.firmwareVersion();
   if (fv < "1.0.0") {
-    if (Serial) {
+    if (serialAvailable) {
       Serial.println("[WiFi] Please upgrade the firmware");
     }
   }
   
   // attempt to connect to Wifi network:
   while (status != WL_CONNECTED) {
-    if (Serial) {
+    if (serialAvailable) {
       Serial.print("[WiFi] Connecting to: ");
       Serial.println(ssid);
     }
@@ -101,7 +117,7 @@ void connectToWifi() {
   }
   
   // you're connected now, so print out the data:
-  if (Serial) {
+  if (serialAvailable) {
     Serial.println("[WiFi] Connected");
   }
 
@@ -110,7 +126,7 @@ void connectToWifi() {
   macAddress = getHex(mac[5]) + ":" + getHex(mac[4]) + ":" + getHex(mac[3]) + ":" + getHex(mac[2]) + ":" + getHex(mac[1]) + ":" + getHex(mac[0]);
 
   // Print MAC address to monitor.
-  if (Serial) {
+  if (serialAvailable) {
     Serial.print("[WiFi] MAC address: ");
     Serial.println(macAddress);
   }
@@ -119,13 +135,13 @@ void connectToWifi() {
 }
 
 void openServer() {
-  if (Serial) {
+  if (serialAvailable) {
     Serial.println("[WiFi] Access Point Web Server");
   }
 
   // check for the WiFi module:
   if (WiFi.status() == WL_NO_MODULE) {
-    if (Serial) {
+    if (serialAvailable) {
       Serial.println("[WiFi] Communication with WiFi module failed!");
     }
     // don't continue
@@ -135,7 +151,7 @@ void openServer() {
   // Check WiFi firmware.
   String fv = WiFi.firmwareVersion();
   if (fv < "1.0.0") {
-    if (Serial) {
+    if (serialAvailable) {
       Serial.println("[WiFi] Please upgrade the firmware");
     }
   }
@@ -145,7 +161,7 @@ void openServer() {
   // WiFi.config(IPAddress(10, 0, 0, 1));
 
   // print the network name (SSID);
-  if (Serial) {
+  if (serialAvailable) {
     Serial.print("[WiFi] Creating access point named: ");
     Serial.println(APssid);
   }
@@ -153,7 +169,7 @@ void openServer() {
   // Create open network. Change this line if you want to create an WEP network:
   status = WiFi.beginAP(APssid);
   if (status != WL_AP_LISTENING) {
-    if (Serial) {
+    if (serialAvailable) {
       Serial.println("[WiFi] Creating access point failed");
     }
     // don't continue
@@ -171,7 +187,7 @@ void openServer() {
 }
 
 void printWiFiStatus() {
-  if (Serial) {
+  if (serialAvailable) {
     // print the SSID of the network you're attached to:
     Serial.print("[WiFi] SSID: ");
     Serial.println(WiFi.SSID());
@@ -188,6 +204,7 @@ void printWiFiStatus() {
 }
 
 void errorBlinking() {
+  digitalWrite(LED_BUILTIN, LOW);
   int i = 0;
   while (i < 10) {
     digitalWrite(LED_BUILTIN, HIGH);
@@ -204,7 +221,7 @@ void counterSend() {
   // Prepare the payload.
   String jsonPayload = "{\"Device\":\"" + macAddress + "\", \"GlobalCount\":" + counter.globalCount + ", \"TotalEntries\":" + counter.totalEntries + ", \"TotalExits\":" + counter.totalExits + "}";
   
-  if (Serial) {
+  if (serialAvailable) {
     Serial.println("[HTTP] Message: " + jsonPayload);
   }
 
@@ -253,6 +270,21 @@ void getTFminiData(Uart* sensor, TFmini* tfmini) {
   }  
 }
 
+void loadConfig() {
+  storedConfig = configStore.read();
+  if (storedConfig.valid) {
+    // Use credentials from store instead of secrets.
+    String userSsid = storedConfig.ssid;
+    String userPw = storedConfig.pw;
+    userSsid.toCharArray(ssid, 255);
+    userPw.toCharArray(pass, 255);
+  }
+  if (serialAvailable) {
+    Serial.print("[Loaded config] SSID:");
+    Serial.println(ssid);
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   
@@ -271,6 +303,13 @@ void setup() {
   // initialize digital pin LED_BUILTIN as an output.
   pinMode(LED_BUILTIN, OUTPUT);
 
+  delay(3000);
+  if (Serial) {
+    serialAvailable = true;
+  }
+
+  // Read SSID and PW from saved config.
+  loadConfig();
 
   // Check initial distance.
   getTFminiData(&SensorOne, &TFminiOne);
@@ -284,17 +323,24 @@ void setup() {
   }
 
   if (TFminiOne.distance < 10 && TFminiTwo.distance < 10) {
-    if (Serial) {
+    if (serialAvailable) {
       Serial.println("Starting in config mode.");
     }
     mode = 1;
     openServer();
   } else {
-    if (Serial) {
+    if (serialAvailable) {
       Serial.println("Starting in run mode.");
     }
     mode = 2;
     connectToWifi();
+    // Set initial resting distance.
+    if (TFminiOne.restingDistance == 0) {
+      TFminiOne.restingDistance = TFminiOne.distance;
+    }
+    if (TFminiTwo.restingDistance == 0) {
+      TFminiTwo.restingDistance = TFminiTwo.distance;
+    }
   }
 }
 
@@ -319,8 +365,6 @@ void updateSensorState(TFmini* sensor, TFmini* otherSensor) {
     sensor->currentDistance = sensor->distance;
   }
 }
-
-int detectedEntry = 0;
 
 unsigned char h2int(char c)
 {
@@ -366,15 +410,10 @@ String urldecode(String str)
 }
 
 void loop() {
-  boolean serialAvailable = false;
-  if (Serial) {
-    serialAvailable = true;
-  }
 
   if (mode == 2) {
     // Run mode.
     static unsigned long lastDetectionTimestamp = 0;
-  
     static unsigned long lastTime = millis();
     static unsigned int count = 0;
     static unsigned int frequency = 0;
@@ -393,15 +432,7 @@ void loop() {
         frequency = count;
         count = 0;
       }
-  
-      // Set initial resting distance.
-      if (TFminiOne.restingDistance == 0) {
-        TFminiOne.restingDistance = TFminiOne.distance;
-      }
-      if (TFminiTwo.restingDistance == 0) {
-        TFminiTwo.restingDistance = TFminiTwo.distance;
-      }
-    
+      
       updateSensorState(&TFminiOne, &TFminiTwo);
       updateSensorState(&TFminiTwo, &TFminiOne);
   
@@ -428,9 +459,7 @@ void loop() {
       TFminiOne.receiveComplete = false;
       TFminiTwo.receiveComplete = false;
     }
-  } else if (mode == 1) {
-    // Config mode.
-    
+  } else {
     // Compare the previous status to the current status.
     if (status != WiFi.status()) {
       // It has changed, update the variable.
@@ -456,8 +485,8 @@ void loop() {
       String currentLine = "";
       String request = "";
       String urlPath = "";
-      String inputSSID = "";
-      String inputPW = "";
+      String inputSSID = ssid;
+      String inputPW = pass;
       
       while (client.connected()) {
         if (client.available()) {
@@ -476,10 +505,10 @@ void loop() {
             if (currentLine.length() == 0) {
               // Get the URL from the path and the query paramters.
               // GET /?ssid=SSID&pw=PW HTTP/1.1
-              if(request.indexOf("ssid=") > 0) {
-                int startOfPath = request.indexOf("GET /?");
+              if(request.indexOf("GET /save") != -1) {
+                int startOfPath = request.indexOf("GET /save?");
                 int endOfPath = request.indexOf(" HTTP");
-                urlPath = request.substring(startOfPath+6, endOfPath);
+                urlPath = request.substring(startOfPath+10, endOfPath);
                 // Get parameters from path.
                 int split = urlPath.indexOf("&");
                 inputSSID = urlPath.substring(5, split);
@@ -493,16 +522,35 @@ void loop() {
                   Serial.print("[Config] PW: ");
                   Serial.println(inputPW);
                 }
+                // Save new SSID and PW to config store.
+                inputSSID.toCharArray(storedConfig.ssid, 255);
+                inputPW.toCharArray(storedConfig.pw, 255);
+                storedConfig.valid = true;
+                configStore.write(storedConfig);
+                // Save the new SSID and PW to memory.
+                inputSSID.toCharArray(ssid, 255);
+                inputPW.toCharArray(pass, 255);
+
+                // Display saved message.
+                // Print the HTTP header.
+                client.println("HTTP/1.1 200 OK");
+                client.println("Content-type:text/html");
+                client.println();
+    
+                // Print the HTTP content.
+                client.print("<!doctype html><html><head></head><body><h4>Saved!</h4><script>setTimeout(() => { window.location.replace('http://192.168.4.1/'); }, 1000);</script>");
+    
+              } else {
+                // Print the HTTP header.
+                client.println("HTTP/1.1 200 OK");
+                client.println("Content-type:text/html");
+                client.println();
+    
+                // Print the HTTP content.
+                client.print("<!doctype html><html><head></head><body><h4>People Counter Configuration</h4><form action='/save' method='get'><label>SSID:</label> <input name='ssid' type='text' maxlength='200' value='"+inputSSID+"'><br><label>Password:</label> <input name='pw' type='text' maxlength='200' value='"+inputPW+"'><br><button type='submit'>Save</button></form>");
               }
 
-              // Print the HTTP header.
-              client.println("HTTP/1.1 200 OK");
-              client.println("Content-type:text/html");
-              client.println();
-  
-              // Print the HTTP content.
-              client.print("<!doctype html><html><head></head><body><h4>People Counter Configuration</h4><form method='get'><label>SSID:</label> <input name='ssid' type='text' value='"+inputSSID+"'><br><label>Password:</label> <input name='pw' type='text' value='"+inputPW+"'><br><button type='submit'>Save</button></form>");
-  
+              
               // The HTTP response ends with another blank line.
               client.println();
               break;
@@ -520,7 +568,7 @@ void loop() {
       // Close the connection:
       client.stop();
       if (serialAvailable) {
-        Serial.println("client disconnected");
+        Serial.println("[Config] client disconnected");
       }
     }
   }
