@@ -5,6 +5,7 @@
 #include <ArduinoHttpClient.h>
 #include <FlashStorage.h>
 #include "arduino_secrets.h"
+#include <Scheduler.h>
 
 // Config variables.
 char ssid[255] = SECRET_SSID;
@@ -94,6 +95,8 @@ String getHex(byte convertByte){
 // Mode (0 == undetermined, 1 == config, 2 == run).
 int mode = 0;
 boolean serialAvailable = false;
+boolean sendCount = false;
+boolean sendingCount = false;
 
 void connectToWifi() {
   // Check WiFi firmware.
@@ -214,35 +217,6 @@ void errorBlinking() {
   }
 }
 
-void counterSend() {
-  // turn the LED on (HIGH is the voltage level)
-  digitalWrite(LED_BUILTIN, HIGH);
-
-  // Prepare the payload.
-  String jsonPayload = "{\"Device\":\"" + macAddress + "\", \"GlobalCount\":" + counter.globalCount + ", \"TotalEntries\":" + counter.totalEntries + ", \"TotalExits\":" + counter.totalExits + "}";
-  
-  if (serialAvailable) {
-    Serial.println("[HTTP] Message: " + jsonPayload);
-  }
-
-  // Execute post request.
-  http_client.post(counterUrl, "application/json", jsonPayload);
-  http_client.contentLength();
-
-  /**
-  // read the status code and body of the response
-  int statusCode = http_client.responseStatusCode();
-  String response = http_client.responseBody();
-  
-  // Blink 
-  if (statusCode != 200 && statusCode != 205) {
-     errorBlinking();
-  }*/
-  
-  // turn the LED off by making the voltage LOW
-  digitalWrite(LED_BUILTIN, LOW);
-}
-
 void getTFminiData(Uart* sensor, TFmini* tfmini) {
   static char i = 0;
   char j = 0;
@@ -342,6 +316,8 @@ void setup() {
       TFminiTwo.restingDistance = TFminiTwo.distance;
     }
   }
+
+  Scheduler.startLoop(loop2);
 }
 
 void updateSensorState(TFmini* sensor, TFmini* otherSensor) {
@@ -438,7 +414,7 @@ void loop() {
   
       //Serial.println(lastDetectionTimestamp);
   
-      bool lastDetectionOldEnough = millis() > (lastDetectionTimestamp + 1000);
+      bool lastDetectionOldEnough = millis() > (lastDetectionTimestamp + 200);
     
       if (TFminiOne.detectedLeave && lastDetectionOldEnough) {
         lastDetectionTimestamp = millis();
@@ -446,14 +422,22 @@ void loop() {
           Serial.println("In");
         }
         counter.increase();
-        counterSend();
+        sendCount = true;
+        // Add a tiny delay so loop 2 gets executed.
+        digitalWrite(LED_BUILTIN, HIGH);
+        delay(10);
+        digitalWrite(LED_BUILTIN, LOW);
       } else if (TFminiTwo.detectedLeave && lastDetectionOldEnough) {
         lastDetectionTimestamp = millis();
         if (serialAvailable) {
           Serial.println("Out");
         }
         counter.decrease();
-        counterSend();
+        sendCount = true;
+        // Add a tiny delay so loop 2 gets executed.
+        digitalWrite(LED_BUILTIN, HIGH);
+        delay(10);
+        digitalWrite(LED_BUILTIN, LOW);
       }
       
       TFminiOne.receiveComplete = false;
@@ -573,6 +557,27 @@ void loop() {
     }
   }
 
+}
+
+// This loop sends the new count without blocking the sensors from collecting more entries and exits.
+void loop2() {
+  if (sendCount && sendingCount == false) {
+    sendingCount = true;
+  
+    // Prepare the payload.
+    String jsonPayload = "{\"Device\":\"" + macAddress + "\", \"GlobalCount\":" + counter.globalCount + ", \"TotalEntries\":" + counter.totalEntries + ", \"TotalExits\":" + counter.totalExits + "}";
+    
+    if (serialAvailable) {
+      Serial.println("[HTTP] Message: " + jsonPayload);
+    }
+  
+    // Execute post request.
+    http_client.post(counterUrl, "application/json", jsonPayload);
+    http_client.contentLength();
+  
+    sendingCount = false;
+  }
+  yield();
 }
 
 void SERCOM3_Handler()

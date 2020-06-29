@@ -25,6 +25,7 @@ You can find the required libraries in the Arduino library manager.
 - wiring_private.h (for giving the pins the required functionality, already included by default)
 - ArduinoHttpClient.h (library to make HTTP requests, already included by default)
 - WiFiNINA.h (WiFi library for the MKR WiFi 1010 board)
+- Scheduler.h (Adds support for multiple operations at once)
 
 ### Secrets
 
